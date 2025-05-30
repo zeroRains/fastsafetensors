@@ -4,23 +4,24 @@
 import os
 import pytest
 import torch
-import paddle
 from safetensors import safe_open
 from safetensors.torch import save_file
-from safetensors.paddle import save_file as paddle_save_file
 from typing import Dict, Tuple
 from fastsafetensors.dlpack import from_cuda_buffer
 from fastsafetensors import SafeTensorsFileLoader, SingleGroup, SafeTensorsMetadata, fastsafe_open
 from fastsafetensors.copier.gds import GdsFileCopier
 from fastsafetensors.copier.nogds import NoGdsFileCopier
-from fastsafetensors.common import alloc_tensor_memory, free_tensor_memory, need_workaround_dtypes
+from fastsafetensors.common import alloc_tensor_memory, free_tensor_memory, need_workaround_dtypes, paddle_loaded
 from fastsafetensors import cpp as fstcpp
+if paddle_loaded:
+    import paddle
+    from safetensors.paddle import save_file as paddle_save_file
 
 def get_and_check_device(framework="pytorch"):
     dev_is_gpu = fstcpp.is_cuda_found()
     if framework == "pytorch" or framework == "pt":
         device = torch.device("cuda:0" if dev_is_gpu else "cpu")
-    elif framework == "paddle":
+    elif paddle_loaded and framework == "paddle":
         device = "gpu:0" if dev_is_gpu else "cpu"
     else:
         raise NotImplementedError(f"Do not support framework: {framework}")
@@ -82,7 +83,8 @@ def test_load_metadata_and_dlpack(fstcpp_log, input_files, framework="pytorch"):
                 printed = True
 
 def test_load_metadata_and_dlpack_for_paddle(fstcpp_log, input_files):
-    test_load_metadata_and_dlpack(fstcpp_log, input_files, "paddle")
+    if paddle_loaded:
+        test_load_metadata_and_dlpack(fstcpp_log, input_files, "paddle")
 
 def test_set_debug_log():
     fstcpp.set_debug_log(False)
@@ -116,7 +118,8 @@ def test_alloc_gds_buffer(fstcpp_log, framework="pytorch"):
     assert addr != 0
 
 def test_alloc_gds_buffer_for_paddle(fstcpp_log):
-    test_alloc_gds_buffer(fstcpp_log, "paddle")
+    if paddle_loaded:
+        test_alloc_gds_buffer(fstcpp_log, "paddle")
 
 def test_cufile_register_deregister(fstcpp_log, framework="pytorch"):
     print("test_cufile_register_deregister")
@@ -128,7 +131,8 @@ def test_cufile_register_deregister(fstcpp_log, framework="pytorch"):
     assert gbuf.cufile_deregister(256) == 0
 
 def test_cufile_register_deregister_for_paddle(fstcpp_log):
-    test_alloc_gds_buffer(fstcpp_log, "paddle")
+    if paddle_loaded:
+        test_alloc_gds_buffer(fstcpp_log, "paddle")
 
 def test_memmove(fstcpp_log , framework="pytorch"):
     print("test_memmove")
@@ -144,7 +148,8 @@ def test_memmove(fstcpp_log , framework="pytorch"):
     # This part really puzzles me. So I change the moving size to 256*3 (<1024)
 
 def test_memmove_for_paddle(fstcpp_log):
-    test_memmove(fstcpp_log, "paddle")
+    if paddle_loaded:
+        test_memmove(fstcpp_log, "paddle")
 
 def test_nogds_file_reader(fstcpp_log, input_files, framework="pytorch"):
     print("test_nogds_file_reader")
@@ -172,7 +177,8 @@ def test_nogds_file_reader(fstcpp_log, input_files, framework="pytorch"):
     os.close(fd)
 
 def test_nogds_file_reader_for_paddle(fstcpp_log, input_files):
-    test_nogds_file_reader(fstcpp_log, input_files, "paddle")
+    if paddle_loaded:
+        test_nogds_file_reader(fstcpp_log, input_files, "paddle")
 
 def test_NoGdsFileCopier(fstcpp_log, input_files, framework="pytorch"):
     print("test_NoGdsFileCopier")
@@ -191,7 +197,8 @@ def test_NoGdsFileCopier(fstcpp_log, input_files, framework="pytorch"):
     free_tensor_memory(gbuf, device, framework)
 
 def test_NoGdsFileCopier_for_paddle(fstcpp_log, input_files):
-    test_NoGdsFileCopier(fstcpp_log, input_files,"paddle")
+    if paddle_loaded:
+        test_NoGdsFileCopier(fstcpp_log, input_files,"paddle")
 
 def test_GdsFileCopier(fstcpp_log, input_files, framework="pytorch"):
     print("test_GdsFileCopier")
@@ -213,7 +220,8 @@ def test_GdsFileCopier(fstcpp_log, input_files, framework="pytorch"):
     free_tensor_memory(gbuf, device, framework=framework)
 
 def test_GdsFileCopier_for_paddle(fstcpp_log, input_files):
-    test_GdsFileCopier(fstcpp_log, input_files, "paddle")
+    if paddle_loaded:
+        test_GdsFileCopier(fstcpp_log, input_files, "paddle")
 
 def test_SafeTensorsFileLoader(fstcpp_log, input_files, framework="pytorch"):
     device, _ = get_and_check_device(framework)
@@ -250,7 +258,8 @@ def test_SafeTensorsFileLoader(fstcpp_log, input_files, framework="pytorch"):
     loader.close()
 
 def test_SafeTensorsFileLoader_for_paddle(fstcpp_log, input_files):
-    test_SafeTensorsFileLoader(fstcpp_log, input_files,"paddle")
+    if paddle_loaded:
+        test_SafeTensorsFileLoader(fstcpp_log, input_files,"paddle")
 
 def test_SafeTensorsFileLoaderNoGds(fstcpp_log, input_files, framework="pytorch"):
     device, _ = get_and_check_device(framework)
@@ -269,7 +278,8 @@ def test_SafeTensorsFileLoaderNoGds(fstcpp_log, input_files, framework="pytorch"
     loader.close()
 
 def test_SafeTensorsFileLoaderNoGds_for_paddle(fstcpp_log, input_files):
-    test_SafeTensorsFileLoaderNoGds(fstcpp_log, input_files, "paddle")
+    if paddle_loaded:
+        test_SafeTensorsFileLoaderNoGds(fstcpp_log, input_files, "paddle")
 
 def test_fastsafe_open(fstcpp_log, input_files, framework="pt"):
     device, _ = get_and_check_device(framework)
@@ -292,7 +302,8 @@ def test_fastsafe_open(fstcpp_log, input_files, framework="pt"):
             assert paddle.all(tensors[k].equal(t))
 
 def test_fastsafe_open_for_paddle(fstcpp_log, input_files):
-    test_fastsafe_open(fstcpp_log, input_files, "paddle")
+    if paddle_loaded:
+        test_fastsafe_open(fstcpp_log, input_files, "paddle")
 
 def _test_type(tmp_dir, dtype, device):
     filename = os.path.join(tmp_dir, f"a.safetensors")
@@ -320,12 +331,15 @@ def _test_type_for_paddle(tmp_dir, dtype, device):
 
 def test_int8(fstcpp_log, tmp_dir):
     _test_type(tmp_dir, torch.int8, "cuda:0" if fstcpp.is_cuda_found() else "cpu")
-    _test_type_for_paddle(tmp_dir, paddle.int8, "gpu:0" if fstcpp.is_cuda_found() else "cpu")
+    if paddle_loaded:
+        _test_type_for_paddle(tmp_dir, paddle.int8, "gpu:0" if fstcpp.is_cuda_found() else "cpu")
 
 def test_float8_e5m2(fstcpp_log, tmp_dir):
     _test_type(tmp_dir, torch.float8_e5m2, "cuda:0" if fstcpp.is_cuda_found() else "cpu")
-    _test_type_for_paddle(tmp_dir, paddle.float8_e5m2, "gpu:0" if fstcpp.is_cuda_found() else "cpu")
+    if paddle_loaded:
+        _test_type_for_paddle(tmp_dir, paddle.float8_e5m2, "gpu:0" if fstcpp.is_cuda_found() else "cpu")
 
 def test_float8_e4m3fn(fstcpp_log, tmp_dir):
     _test_type(tmp_dir, torch.float8_e4m3fn, "cuda:0" if fstcpp.is_cuda_found() else "cpu")
-    _test_type_for_paddle(tmp_dir, paddle.float8_e4m3fn, "gpu:0" if fstcpp.is_cuda_found() else "cpu")
+    if paddle_loaded:
+        _test_type_for_paddle(tmp_dir, paddle.float8_e4m3fn, "gpu:0" if fstcpp.is_cuda_found() else "cpu")

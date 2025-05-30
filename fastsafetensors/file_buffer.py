@@ -8,7 +8,9 @@ from typing import Dict, List, Tuple, Generator
 from collections import OrderedDict
 
 from .tensor_factory import LazyTensorFactory
-from .common import SingleGroup
+from .common import SingleGroup, paddle_loaded
+if paddle_loaded:
+    import paddle
 
 class FilesBufferOnDevice:
     r""" Device buffer for .safetensors files.
@@ -44,7 +46,7 @@ class FilesBufferOnDevice:
         if self.framework == "pytorch" or isinstance(pg, SingleGroup):
             self.pg = pg
             self.group = None
-        elif self.framework == "paddle":
+        elif paddle_loaded and self.framework == "paddle":
             self.pg = pg.process_group
             self.group = pg
         self.auto_mem_delete = auto_mem_delete and self.pg.size() > 1

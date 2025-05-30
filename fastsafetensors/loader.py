@@ -3,16 +3,17 @@
 
 import torch
 import torch.distributed as dist
-import paddle
 import os
 import math
 from . import cpp as fstcpp
 from typing import List, Dict, Tuple, OrderedDict, Union
 import warnings
 
-from .common import SafeTensorsMetadata, ALIGN, CUDA_PTR_ALIGN, TensorFrame, get_device_numa_node, SingleGroup
+from .common import paddle_loaded, SafeTensorsMetadata, ALIGN, CUDA_PTR_ALIGN, TensorFrame, get_device_numa_node, SingleGroup
 from .tensor_factory import LazyTensorFactory
 from .file_buffer import FilesBufferOnDevice
+if paddle_loaded:
+    import paddle
 
 initialized: bool = False
 loaded_nvidia: bool = False
@@ -20,7 +21,9 @@ if not loaded_nvidia:
     fstcpp.load_nvidia_functions()
     loaded_nvidia = True
 
-support_framework = ["pytorch","paddle", "pt"]
+support_framework = ["pytorch", "pt"]
+if paddle_loaded:
+    support_framework.append("paddle")
 
 class SafeTensorsFileLoader:
     r""" Load .safetensors files lazily.
@@ -55,7 +58,7 @@ class SafeTensorsFileLoader:
         if self.framework == "pytorch" or isinstance(pg, SingleGroup):
             self.pg = pg
             self.group = pg
-        elif self.framework == "paddle":
+        elif paddle_loaded and self.framework == "paddle":
             self.pg = pg.process_group
             self.group = pg
         self.nogds = nogds
@@ -64,7 +67,7 @@ class SafeTensorsFileLoader:
             fstcpp.set_debug_log(debug_log)
             if self.framework == "pytorch":
                 d_id = device.index
-            elif self.framework == "paddle":
+            elif paddle_loaded and self.framework == "paddle":
                 if device == "cpu":
                     d_id = None
                 else:
@@ -78,7 +81,7 @@ class SafeTensorsFileLoader:
                     raise Exception(f"[FAIL] init_gds max_io_block_in_kb={max_io_block_in_kb}, max_pinned_memory_in_kb={max_pinned_memory_in_kb}")
                 self.need_gds_close = True
             initialized = True
-        device_is_not_cpu = not (self.framework == "paddle" and device == "cpu") and not (self.framework == "pytorch" and device.type == "cpu")
+        device_is_not_cpu = not (paddle_loaded and self.framework == "paddle" and device == "cpu") and not (self.framework == "pytorch" and device.type == "cpu")
         if device_is_not_cpu and not fstcpp.is_cuda_found():
             raise Exception("[FAIL] libcudart.so does not exist")
         if not fstcpp.is_cufile_found() and not nogds:
@@ -136,7 +139,7 @@ class SafeTensorsFileLoader:
         if self.framework == "pytorch":
             if self.device.type != "cpu":
                 torch.cuda.set_device(self.device)
-        elif self.framework == "paddle":
+        elif paddle_loaded and self.framework == "paddle":
             if self.device != paddle.CPUPlace():
                 paddle.set_device(self.device)
 
@@ -160,7 +163,7 @@ class SafeTensorsFileLoader:
             factory.wait_io(dtype=dtype, noalign=self.nogds)
         if self.framework == "pytorch":
             return FilesBufferOnDevice(factories, pg=self.pg)
-        elif self.framework == "paddle":
+        elif paddle_loaded and self.framework == "paddle":
             return FilesBufferOnDevice(factories, pg=self.group, framework=self.framework)
         return None
 

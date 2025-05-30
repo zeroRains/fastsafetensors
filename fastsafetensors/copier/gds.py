@@ -2,10 +2,11 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import torch
-import paddle
 from .. import cpp as fstcpp
 from typing import Dict
-from ..common import alloc_tensor_memory, free_tensor_memory, SafeTensorsMetadata, ALIGN, CUDA_PTR_ALIGN
+from ..common import alloc_tensor_memory, free_tensor_memory, SafeTensorsMetadata, ALIGN, CUDA_PTR_ALIGN, paddle_loaded
+if paddle_loaded:
+    import paddle
 
 class GdsFileCopier:
     def __init__(self, metadata: SafeTensorsMetadata, device: torch.device, reader: fstcpp.gds_file_reader, debug_log: bool=False):
@@ -20,7 +21,7 @@ class GdsFileCopier:
         try:
             if self.metadata.framework == "pytorch":
                 cuda_vers_list = torch.version.cuda.split('.')
-            elif self.metadata.framework == "paddle":
+            elif paddle_loaded and self.metadata.framework == "paddle":
                 cuda_vers_list = paddle.version.cuda().split('.')
             cudavers = list(map(int, cuda_vers_list))
             # CUDA 12.2 (GDS version 1.7) introduces support for non O_DIRECT file descriptors
@@ -33,7 +34,7 @@ class GdsFileCopier:
         self.o_direct = enable
 
     def submit_io(self, use_buf_register: bool, max_copy_block_size: int)->fstcpp.gds_device_buffer:
-        dev_is_cuda = (self.metadata.framework == "pytorch" and self.device.type == 'cuda') or (self.metadata.framework == "paddle" and "gpu" in self.device)
+        dev_is_cuda = (self.metadata.framework == "pytorch" and self.device.type == 'cuda') or (paddle_loaded and self.metadata.framework == "paddle" and "gpu" in self.device)
         self.fh = fstcpp.gds_file_handle(self.metadata.src, self.o_direct, dev_is_cuda)
         offset = self.metadata.header_length
         length = self.metadata.size_bytes - self.metadata.header_length

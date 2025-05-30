@@ -2,16 +2,18 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import torch
-import paddle
 import torch.distributed as dist
-import paddle.distributed as pdist
 from typing import Dict, List, Tuple
 from collections import OrderedDict
 
 from . import cpp as fstcpp
-from .common import SafeTensorsMetadata, free_tensor_memory
+from .common import SafeTensorsMetadata, free_tensor_memory, paddle_loaded
 from .copier.gds import GdsFileCopier
 from .copier.nogds import NoGdsFileCopier
+
+if paddle_loaded:
+    import paddle
+    import paddle.distributed as pdist
 
 class LazyTensorFactory:
     def __init__(self, metadata: SafeTensorsMetadata, device: torch.device, rank: int, local_rank: bool, factory_idx_bits: int, lidx: int, nogds: bool, reader, debug_log: bool=False):
@@ -66,7 +68,7 @@ class LazyTensorFactory:
                 print(f"push: send, tensor_name={tensor_name}, shape={frame.shape}, dst_rank={dst_rank}, pg.rank()={pg.rank()}, tag={tag}")
             if self.metadata.framework == "pytorch":
                 dist.send(t, dst_rank, group=pg, tag=tag)
-            elif self.metadata.framework == "paddle":
+            elif paddle_loaded and self.metadata.framework == "paddle":
                 pdist.send(t, dst_rank, group=group)
             return None
         
@@ -76,7 +78,7 @@ class LazyTensorFactory:
         if self.metadata.framework == "pytorch":
             t = torch.empty(size=frame.shape, dtype=frame.dtype, device=self.device)
             dist.recv(t, src_rank, group=pg, tag=tag)
-        elif self.metadata.framework == "paddle":
+        elif paddle_loaded and self.metadata.framework == "paddle":
             t = paddle.to_tensor(paddle.empty(size=frame.shape, dtype=frame.dtype), place=self.device)
             pdist.recv(t,src_rank, group=group)
         return t
@@ -96,14 +98,14 @@ class LazyTensorFactory:
             else:
                 if self.metadata.framework == "pytorch":
                     dst = torch.empty(size=frame.shape, dtype=frame.dtype, device=self.device)
-                elif self.metadata.framework == "paddle":
+                elif paddle_loaded and self.metadata.framework == "paddle":
                     dst = paddle.to_tensor(paddle.empty(shape=frame.shape, dtype=frame.dtype), place=self.device)
                     
             if self.debug_log:
                 print(f"shuffle: broadcast, tensor_name={tensor_name}, shape={frame.shape}, self.rank={self.rank}, pg.rank()={pg.rank()}, has_tensor={tensor_name in self.tensors}")
             if self.metadata.framework == "pytorch":
                 dist.broadcast(dst, self.rank, group=pg)
-            elif self.metadata.framework == "paddle":
+            elif paddle_loaded and self.metadata.framework == "paddle":
                 pdist.broadcast(dst, self.rank, group=group, sync_op=False)
         else:
             rank_slices: List[Tuple] = [() for i in range(0, pg.size())]
@@ -121,7 +123,7 @@ class LazyTensorFactory:
             
             if self.metadata.framework == "pytorch":
                 dst = torch.empty(size=new_frame.shape, dtype=new_frame.dtype, device=self.device)
-            elif self.metadata.framework == "paddle":
+            elif paddle_loaded and self.metadata.framework == "paddle":
                 dst = paddle.to_tensor(paddle.empty(shape=new_frame.shape, dtype=frame.dtype), place=self.device)
             if self.rank == pg.rank():
                 if tensor_name not in self.tensors:
@@ -132,7 +134,7 @@ class LazyTensorFactory:
                 print(f"shuffle: scatter, tensor_name={tensor_name}, shape={frame.shape}->{new_frame.shape}, self.rank={self.rank}, pg.rank()={pg.rank()}, rank_slices={rank_slices}, len(scatter_list)={len(scatter_list)}")
             if self.metadata.framework == "pytorch":
                 dist.scatter(dst, scatter_list=scatter_list, src=self.rank, group=pg)
-            elif self.metadata.framework == "paddle":
+            elif paddle_loaded and self.metadata.framework == "paddle":
                 pdist.scatter(dst, tensor_list=scatter_list, src=self.rank, group=group, sync_op=False)
         self.shuffled[tensor_name] = dst
         return dst
@@ -156,7 +158,7 @@ class LazyTensorFactory:
                 v = t[(slice(single_size * 2 + rank * block_size, single_size * 2 + (rank + 1) * block_size, 1))]
                 if self.metadata.framework == "pytorch":
                     cat_res = torch.cat([q, k, v], dim=0)
-                elif self.metadata.framework == "paddle":
+                elif paddle_loaded and self.metadata.framework == "paddle":
                     cat_res = paddle.concat([q, k, v], axis=0)
                 scatter_list.append(cat_res)
         if pg.size() == 1:
@@ -169,7 +171,7 @@ class LazyTensorFactory:
         if self.metadata.framework == "pytorch":
             dst = torch.empty(size=new_shape, dtype=frame.dtype, device=self.device)
             dist.scatter(dst, scatter_list=scatter_list, src=self.rank, group=pg)
-        elif self.metadata.framework == "paddle":
+        elif paddle_loaded and self.metadata.framework == "paddle":
             dst = paddle.to_tensor(paddle.empty(shape=new_shape, dtype=frame.dtype),place=self.device)
             pdist.scatter(dst, tensor_list=scatter_list, src=self.rank, group=group, sync_op=False)
         self.shuffled[tensor_name] = dst
@@ -197,7 +199,7 @@ class LazyTensorFactory:
         if pg.size() == 1:
             if self.metadata.framework == "pytorch":
                 return torch.cat(rank_tensors[self.rank], dim=dim)
-            elif self.metadata.framework == "paddle":
+            elif paddle_loaded and self.metadata.framework == "paddle":
                 return paddle.concat(rank_tensors[self.rank], axis=dim)
             return None
         scatter_list: List[torch.Tensor] = []
@@ -210,7 +212,7 @@ class LazyTensorFactory:
         if self.metadata.framework == "pytorch":
             dst = torch.empty(size=new_shape, dtype=frame.dtype, device=self.device) # dst should be eariler than scatter_list for less fragmentation
             dist.scatter(dst, scatter_list=scatter_list, src=self.rank, group=pg)
-        elif self.metadata.framework == "paddle":
+        elif paddle_loaded and self.metadata.framework == "paddle":
             dst = paddle.to_tensor(paddle.empty(shape=new_shape, dtype=frame.dtype), place=self.device )# dst should be eariler than scatter_list for less fragmentation
             pdist.scatter(dst, tensor_list=scatter_list, src=self.rank, group=group, sync_op=False)
         return dst
