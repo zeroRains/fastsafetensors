@@ -6,8 +6,10 @@
 
 import ctypes
 import torch
-import paddle
+from .common import paddle_loaded
 from typing import List
+if paddle_loaded:
+    import paddle
 
 _c_str_dltensor = b"dltensor"
 
@@ -74,18 +76,31 @@ class DLDataType(ctypes.Structure):
         torch.float32: (2, 32, 1),
         torch.float64: (2, 64, 1),
         torch.bfloat16: (4, 16, 1),
-        paddle.bool: (6, 8, 1),
-        paddle.int8: (0, 8, 1),
-        paddle.int16: (0, 16, 1),
-        paddle.int32: (0, 32, 1),
-        paddle.int64: (0, 64, 1),
-        paddle.uint8: (1, 8, 1),
-        paddle.float16: (2, 16, 1),
-        paddle.float32: (2, 32, 1),
-        paddle.float64: (2, 64, 1),
-        paddle.bfloat16: (4, 16, 1),
     }
-
+    if paddle_loaded:
+        TYPE_MAP = {
+            torch.bool: (6, 8, 1),
+            torch.int8: (0, 8, 1),
+            torch.int16: (0, 16, 1),
+            torch.int32: (0, 32, 1),
+            torch.int: (0, 32, 1),
+            torch.int64: (0, 64, 1),
+            torch.uint8: (1, 8, 1),
+            torch.float16: (2, 16, 1),
+            torch.float32: (2, 32, 1),
+            torch.float64: (2, 64, 1),
+            torch.bfloat16: (4, 16, 1),
+            paddle.bool: (6, 8, 1),
+            paddle.int8: (0, 8, 1),
+            paddle.int16: (0, 16, 1),
+            paddle.int32: (0, 32, 1),
+            paddle.int64: (0, 64, 1),
+            paddle.uint8: (1, 8, 1),
+            paddle.float16: (2, 16, 1),
+            paddle.float32: (2, 32, 1),
+            paddle.float64: (2, 64, 1),
+            paddle.bfloat16: (4, 16, 1),
+        }
 
 class DLTensor(ctypes.Structure):
     _fields_ = [

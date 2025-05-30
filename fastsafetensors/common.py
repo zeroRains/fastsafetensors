@@ -2,8 +2,12 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import torch
-import paddle
-from paddle.framework import core as paddle_core
+try:
+    import paddle
+    from paddle.framework import core as paddle_core
+    paddle_loaded = True
+except:
+    paddle_loaded = False
 import os
 import json
 from collections import OrderedDict
@@ -22,20 +26,35 @@ CUDA_PTR_ALIGN: int = 16
 
 framework_index = {
     "pytorch": 1,
-    "paddle": 2,
 }
 dtype_convert = {
-    'BOOL': (1, torch.bool, paddle.bool), 'U8': (1, torch.uint8, paddle.uint8), 'I8': (1, torch.int8, paddle.int8), 'F8_E5M2': (1, torch.float8_e5m2, paddle.float8_e5m2), 'F8_E4M3': (1, torch.float8_e4m3fn, paddle.float8_e4m3fn),
-    'I16': (2, torch.int16, paddle.int16), 'U16': (2, torch.int16, paddle.bfloat16), 'I32': (4, torch.int32, paddle.int32), 'U32': (4, torch.int32, paddle.int32), 'I64': (8, torch.int64, paddle.int64), 'U64': (8, torch.int64, paddle.int64),
-    'F16': (2, torch.float16, paddle.float16), 'BF16': (2, torch.bfloat16, paddle.bfloat16), 'F32': (4, torch.float32, paddle.float32), 'F64': (8, torch.float64, paddle.float64)
+    'BOOL': (1, torch.bool), 'U8': (1, torch.uint8), 'I8': (1, torch.int8), 'F8_E5M2': (1, torch.float8_e5m2), 'F8_E4M3': (1, torch.float8_e4m3fn),
+    'I16': (2, torch.int16), 'U16': (2, torch.int16), 'I32': (4, torch.int32), 'U32': (4, torch.int32), 'I64': (8, torch.int64), 'U64': (8, torch.int64),
+    'F16': (2, torch.float16), 'BF16': (2, torch.bfloat16), 'F32': (4, torch.float32), 'F64': (8, torch.float64)
 }
 
 need_workaround_dtypes = {
     torch.float8_e5m2: torch.int8,
     torch.float8_e4m3fn: torch.int8,
-    paddle.float8_e5m2 : paddle.int8,
-    paddle.float8_e4m3fn : paddle.int8
 }
+
+if paddle_loaded:
+    framework_index = {
+        "pytorch": 1,
+        "paddle": 2,
+    }
+    dtype_convert = {
+        'BOOL': (1, torch.bool, paddle.bool), 'U8': (1, torch.uint8, paddle.uint8), 'I8': (1, torch.int8, paddle.int8), 'F8_E5M2': (1, torch.float8_e5m2, paddle.float8_e5m2), 'F8_E4M3': (1, torch.float8_e4m3fn, paddle.float8_e4m3fn),
+        'I16': (2, torch.int16, paddle.int16), 'U16': (2, torch.int16, paddle.bfloat16), 'I32': (4, torch.int32, paddle.int32), 'U32': (4, torch.int32, paddle.int32), 'I64': (8, torch.int64, paddle.int64), 'U64': (8, torch.int64, paddle.int64),
+        'F16': (2, torch.float16, paddle.float16), 'BF16': (2, torch.bfloat16, paddle.bfloat16), 'F32': (4, torch.float32, paddle.float32), 'F64': (8, torch.float64, paddle.float64)
+    }
+
+    need_workaround_dtypes = {
+        torch.float8_e5m2: torch.int8,
+        torch.float8_e4m3fn: torch.int8,
+        paddle.float8_e5m2 : paddle.int8,
+        paddle.float8_e4m3fn : paddle.int8
+    }
 
 def str_to_dtype(dtype_str: str, framework: str="pytorch")->torch.dtype:
     if framework not in framework_index.keys():
@@ -62,7 +81,7 @@ def alloc_tensor_memory(length: int, dev: torch.device, framework: str="pytorch"
     dev_is_gpu = True
     if framework == "pytorch" and dev.type == 'cuda':
         rbuf = torch.cuda.caching_allocator_alloc(length)
-    elif framework == "paddle" and "gpu" in dev:
+    elif paddle_loaded and framework == "paddle" and "gpu" in dev:
         rbuf = fstcpp.gpu_malloc(length)
     else:
         dev_is_gpu = False
@@ -72,7 +91,7 @@ def alloc_tensor_memory(length: int, dev: torch.device, framework: str="pytorch"
 def free_tensor_memory(gbuf: fstcpp.gds_device_buffer, dev: torch.device, framework: str="pytorch"):
     if framework =="pytorch" and dev.type == 'cuda':
         rbuf = torch.cuda.caching_allocator_delete(gbuf.get_base_address())
-    elif framework == "paddle" and "gpu" in dev:
+    elif paddle_loaded and framework == "paddle" and "gpu" in dev:
         rbuf = fstcpp.gpu_free(gbuf.get_base_address())
     else:
         rbuf = fstcpp.cpu_free(gbuf.get_base_address())
@@ -109,7 +128,7 @@ class SafeTensorsMetadata:
                 nelements *= sh
             if self.framework == "pytorch":
                 t_dtype_size = t.dtype.itemsize
-            elif self.framework == "paddle":
+            elif paddle_loaded and self.framework == "paddle":
                 t_dtype_size = paddle_core.size_of_dtype(t.dtype)
             nbytes = nelements * t_dtype_size
             if (e - s) != nbytes:
@@ -180,7 +199,7 @@ class SafeTensorsMetadata:
                         t2 = torch.from_dlpack(from_cuda_buffer(dst_dev_ptr, t.shape, t.strides, dtype, device))
                     t2.copy_(t3)
                     self.tensors[tensor_name].dtype = dtype
-            elif self.framework == "paddle":
+            elif paddle_loaded and self.framework == "paddle":
                 if t.dtype in need_workaround_dtypes:
                     t2 = paddle.utils.dlpack.from_dlpack(from_cuda_buffer(dst_dev_ptr, t.shape, t.strides, need_workaround_dtypes[t.dtype], device))
                 else:
