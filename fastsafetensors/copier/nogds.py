@@ -1,14 +1,14 @@
 # Copyright 2024 IBM Inc. All rights reserved
 # SPDX-License-Identifier: Apache-2.0
 
-import torch
+
 import os
 from .. import cpp as fstcpp
 from typing import Dict
 from ..common import alloc_tensor_memory, SafeTensorsMetadata, ALIGN, CUDA_PTR_ALIGN
 
 class NoGdsFileCopier:
-    def __init__(self, metadata: SafeTensorsMetadata, device: torch.device, reader: fstcpp.nogds_file_reader, debug_log: bool=False):
+    def __init__(self, metadata: SafeTensorsMetadata, device, reader: fstcpp.nogds_file_reader, debug_log: bool=False):
         self.metadata = metadata
         self.reader = reader
         self.fd = os.open(metadata.src, os.O_RDONLY, 0o644)
@@ -33,7 +33,7 @@ class NoGdsFileCopier:
             count += l
         return gbuf
 
-    def wait_io(self, gbuf: fstcpp.gds_device_buffer, dtype: torch.dtype=None, noalign: bool=False)->Dict[str, torch.Tensor]:
+    def wait_io(self, gbuf: fstcpp.gds_device_buffer, dtype=None, noalign: bool=False)->Dict[str, None]:
         for req in self.reqs:
             count = self.reader.wait_read(req)
             if count < 0:

@@ -5,7 +5,6 @@
 # to add from_cuda_buffer()
 
 import ctypes
-import torch
 from .common import paddle_loaded
 from typing import List
 if paddle_loaded:
@@ -14,7 +13,7 @@ if paddle_loaded:
 _c_str_dltensor = b"dltensor"
 
 class DLDevice(ctypes.Structure):
-    def __init__(self, device: torch.device):
+    def __init__(self, device):
         if isinstance(device, str):
             self.device_id = 0
             if device == "cpu":
@@ -65,31 +64,9 @@ class DLDataType(ctypes.Structure):
         ("lanes", ctypes.c_uint16),
     ]
     TYPE_MAP = {
-        torch.bool: (6, 8, 1),
-        torch.int8: (0, 8, 1),
-        torch.int16: (0, 16, 1),
-        torch.int32: (0, 32, 1),
-        torch.int: (0, 32, 1),
-        torch.int64: (0, 64, 1),
-        torch.uint8: (1, 8, 1),
-        torch.float16: (2, 16, 1),
-        torch.float32: (2, 32, 1),
-        torch.float64: (2, 64, 1),
-        torch.bfloat16: (4, 16, 1),
     }
     if paddle_loaded:
         TYPE_MAP = {
-            torch.bool: (6, 8, 1),
-            torch.int8: (0, 8, 1),
-            torch.int16: (0, 16, 1),
-            torch.int32: (0, 32, 1),
-            torch.int: (0, 32, 1),
-            torch.int64: (0, 64, 1),
-            torch.uint8: (1, 8, 1),
-            torch.float16: (2, 16, 1),
-            torch.float32: (2, 32, 1),
-            torch.float64: (2, 64, 1),
-            torch.bfloat16: (4, 16, 1),
             paddle.bool: (6, 8, 1),
             paddle.int8: (0, 8, 1),
             paddle.int16: (0, 16, 1),
@@ -198,7 +175,7 @@ def _numpy_pycapsule_deleter(handle: ctypes.c_void_p) -> None:
         _numpy_cuda_buffer_deleter(dl_managed_tensor)
         ctypes.pythonapi.PyCapsule_SetDestructor(pycapsule, None)
 
-def from_cuda_buffer(dev_ptr: int, shape: List[int], strides: List[int], dtype: torch.dtype, device: torch.device):
+def from_cuda_buffer(dev_ptr: int, shape: List[int], strides: List[int], dtype, device):
     holder = _Holder(shape, strides)
     size = ctypes.c_size_t(ctypes.sizeof(DLManagedTensor))
     dl_managed_tensor = DLManagedTensor.from_address(

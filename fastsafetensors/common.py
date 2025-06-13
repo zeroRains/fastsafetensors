@@ -1,7 +1,5 @@
 # Copyright 2024 IBM Inc. All rights reserved
 # SPDX-License-Identifier: Apache-2.0
-
-import torch
 try:
     import paddle
     from paddle.framework import core as paddle_core
@@ -24,19 +22,6 @@ class SingleGroup:
 ALIGN: int = fstcpp.get_alignment_size()
 CUDA_PTR_ALIGN: int = 16
 
-framework_index = {
-    "pytorch": 1,
-}
-dtype_convert = {
-    'BOOL': (1, torch.bool), 'U8': (1, torch.uint8), 'I8': (1, torch.int8), 'F8_E5M2': (1, torch.float8_e5m2), 'F8_E4M3': (1, torch.float8_e4m3fn),
-    'I16': (2, torch.int16), 'U16': (2, torch.int16), 'I32': (4, torch.int32), 'U32': (4, torch.int32), 'I64': (8, torch.int64), 'U64': (8, torch.int64),
-    'F16': (2, torch.float16), 'BF16': (2, torch.bfloat16), 'F32': (4, torch.float32), 'F64': (8, torch.float64)
-}
-
-need_workaround_dtypes = {
-    torch.float8_e5m2: torch.int8,
-    torch.float8_e4m3fn: torch.int8,
-}
 
 if paddle_loaded:
     framework_index = {
@@ -44,19 +29,17 @@ if paddle_loaded:
         "paddle": 2,
     }
     dtype_convert = {
-        'BOOL': (1, torch.bool, paddle.bool), 'U8': (1, torch.uint8, paddle.uint8), 'I8': (1, torch.int8, paddle.int8), 'F8_E5M2': (1, torch.float8_e5m2, paddle.float8_e5m2), 'F8_E4M3': (1, torch.float8_e4m3fn, paddle.float8_e4m3fn),
-        'I16': (2, torch.int16, paddle.int16), 'U16': (2, torch.int16, paddle.bfloat16), 'I32': (4, torch.int32, paddle.int32), 'U32': (4, torch.int32, paddle.int32), 'I64': (8, torch.int64, paddle.int64), 'U64': (8, torch.int64, paddle.int64),
-        'F16': (2, torch.float16, paddle.float16), 'BF16': (2, torch.bfloat16, paddle.bfloat16), 'F32': (4, torch.float32, paddle.float32), 'F64': (8, torch.float64, paddle.float64)
+        'BOOL': (1, None, paddle.bool), 'U8': (1, None, paddle.uint8), 'I8': (1, None, paddle.int8), 'F8_E5M2': (1, None, paddle.float8_e5m2), 'F8_E4M3': (1, None, paddle.float8_e4m3fn),
+        'I16': (2, None, paddle.int16), 'U16': (2, None, paddle.bfloat16), 'I32': (4, None, paddle.int32), 'U32': (4, None, paddle.int32), 'I64': (8, None, paddle.int64), 'U64': (8, None, paddle.int64),
+        'F16': (2, None, paddle.float16), 'BF16': (2, None, paddle.bfloat16), 'F32': (4, None, paddle.float32), 'F64': (8, None, paddle.float64)
     }
 
     need_workaround_dtypes = {
-        torch.float8_e5m2: torch.int8,
-        torch.float8_e4m3fn: torch.int8,
         paddle.float8_e5m2 : paddle.int8,
         paddle.float8_e4m3fn : paddle.int8
     }
 
-def str_to_dtype(dtype_str: str, framework: str="pytorch")->torch.dtype:
+def str_to_dtype(dtype_str: str, framework: str="pytorch"):
     if framework not in framework_index.keys():
         raise NotImplementedError(f"str_to_dtype: Not implemented for other frameworks than {framework_index.keys()}")
     if dtype_str not in dtype_convert:
@@ -77,21 +60,17 @@ def get_device_numa_node(device: int):
     with open(syspath) as f:
         return int(f.read().strip())
 
-def alloc_tensor_memory(length: int, dev: torch.device, framework: str="pytorch")->fstcpp.gds_device_buffer:
+def alloc_tensor_memory(length: int, dev, framework: str="pytorch")->fstcpp.gds_device_buffer:
     dev_is_gpu = True
-    if framework == "pytorch" and dev.type == 'cuda':
-        rbuf = torch.cuda.caching_allocator_alloc(length)
-    elif paddle_loaded and framework == "paddle" and "gpu" in dev:
+    if paddle_loaded and framework == "paddle" and "gpu" in dev:
         rbuf = fstcpp.gpu_malloc(length)
     else:
         dev_is_gpu = False
         rbuf = fstcpp.cpu_malloc(length)
     return fstcpp.gds_device_buffer(rbuf, length, dev_is_gpu)
 
-def free_tensor_memory(gbuf: fstcpp.gds_device_buffer, dev: torch.device, framework: str="pytorch"):
-    if framework =="pytorch" and dev.type == 'cuda':
-        rbuf = torch.cuda.caching_allocator_delete(gbuf.get_base_address())
-    elif paddle_loaded and framework == "paddle" and "gpu" in dev:
+def free_tensor_memory(gbuf: fstcpp.gds_device_buffer, dev, framework: str="pytorch"):
+    if paddle_loaded and framework == "paddle" and "gpu" in dev:
         rbuf = fstcpp.gpu_free(gbuf.get_base_address())
     else:
         rbuf = fstcpp.cpu_free(gbuf.get_base_address())
@@ -180,26 +159,11 @@ class SafeTensorsMetadata:
         os.close(fd)
         return ret
 
-    def get_tensors(self, gbuf: fstcpp.gds_device_buffer, device: torch.device, copy_start_offset: int, dtype: torch.dtype=None) -> Dict[str, torch.Tensor]:
+    def get_tensors(self, gbuf: fstcpp.gds_device_buffer, device, copy_start_offset: int, dtype=None) -> Dict[str, None]:
         ret = {}
         for tensor_name, t in self.tensors.items():
             dst_dev_ptr = gbuf.get_base_address() + self.header_length + t.data_offsets[0]-copy_start_offset
-            if self.framework == "pytorch":
-                if t.dtype in need_workaround_dtypes:
-                    t2 = torch.from_dlpack(from_cuda_buffer(dst_dev_ptr, t.shape, t.strides, need_workaround_dtypes[t.dtype], device)).view(t.dtype)
-                else:
-                    t2 = torch.from_dlpack(from_cuda_buffer(dst_dev_ptr, t.shape, t.strides, t.dtype, device))
-                if dtype is not None and dtype != t.dtype:
-                    if dtype.itemsize > t.dtype.itemsize:
-                        raise Exception(f"Online type conversion to larger sizes is not supported ({t.dtype} -> {dtype})")
-                    t3 = t2.to(dtype=dtype)
-                    if dtype in need_workaround_dtypes:
-                        t2 = torch.from_dlpack(from_cuda_buffer(dst_dev_ptr, t.shape, t.strides, need_workaround_dtypes[dtype], device)).view(dtype)
-                    else:
-                        t2 = torch.from_dlpack(from_cuda_buffer(dst_dev_ptr, t.shape, t.strides, dtype, device))
-                    t2.copy_(t3)
-                    self.tensors[tensor_name].dtype = dtype
-            elif paddle_loaded and self.framework == "paddle":
+            if paddle_loaded and self.framework == "paddle":
                 if t.dtype in need_workaround_dtypes:
                     t2 = paddle.utils.dlpack.from_dlpack(from_cuda_buffer(dst_dev_ptr, t.shape, t.strides, need_workaround_dtypes[t.dtype], device))
                 else:
@@ -221,7 +185,7 @@ class SafeTensorsMetadata:
         return str({"__metadata__": self.metadata, "tensors": self.tensors})
 
 class TensorFrame:
-    def __init__(self, dtype: torch.dtype, shape: torch.Size, data_offsets: List[int], strides: List[int], offsets: List[int], sliced: bool):
+    def __init__(self, dtype, shape, data_offsets: List[int], strides: List[int], offsets: List[int], sliced: bool):
         self.dtype = dtype
         self.shape = shape
         self.data_offsets = data_offsets
@@ -233,8 +197,6 @@ class TensorFrame:
     def from_buffer(self, entry: OrderedDict[str, List[int]], framework:str="pytorch"):
         dtype = str_to_dtype(entry['dtype'], framework=framework)
         shape = entry['shape']
-        if framework == "pytorch":
-            shape = torch.Size(shape)
         data_offsets = list(entry['data_offsets'])
         strides = []
         offsets = []
@@ -295,7 +257,7 @@ class TensorFrame:
                     raise ValueError(f"[BUG] slice step cannot be zero")
                 length = stop - start
                 if length == 0 or (length < 0 and step > 0) or (length > 0 and step < 0):
-                    return TensorFrame(self.dtype, torch.Size([]), self.data_offsets, (), ())
+                    return TensorFrame(self.dtype, [], self.data_offsets, (), ())
                 if length < 0 and step < 0:
                     length *= -1
             else:
@@ -307,4 +269,4 @@ class TensorFrame:
             offsets.append(self.offsets[rdim])
             strides.append(self.strides[rdim])
             shape.append(self.shape[rdim])
-        return TensorFrame(self.dtype, torch.Size(shape), self.data_offsets, strides, offsets, True)
+        return TensorFrame(self.dtype, shape, self.data_offsets, strides, offsets, True)

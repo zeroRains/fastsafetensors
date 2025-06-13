@@ -10,7 +10,6 @@ keywords = ["fastsafetensors", "safetensors", "GDS"]
 requires-python = ">= 3.9"
 dependencies = [
     "typer>=0.9.0",
-    "torch>=2.1",
 ]
 
 [project.optional-dependencies]

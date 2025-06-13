@@ -1,8 +1,6 @@
 # Copyright 2024 IBM Inc. All rights reserved
 # SPDX-License-Identifier: Apache-2.0
 
-import torch
-import torch.distributed as dist
 import os
 import math
 from . import cpp as fstcpp
@@ -46,7 +44,7 @@ class SafeTensorsFileLoader:
         >> print(bufs.get_tensor(loader.get_keys()[0]))
         >> loader.close()
     """
-    def __init__(self, pg: dist.ProcessGroup, device: torch.device, bbuf_size_kb: int = 16 * 1024, max_pinned_memory_in_kb: int = 64 * 1024 * 1024, max_threads: int=16, nogds: bool=False, debug_log: bool=False, framework="pytorch"):
+    def __init__(self, pg, device, bbuf_size_kb: int = 16 * 1024, max_pinned_memory_in_kb: int = 64 * 1024 * 1024, max_threads: int=16, nogds: bool=False, debug_log: bool=False, framework="pytorch"):
         if framework not in support_framework:
             raise NotImplementedError(f"fastsafetensors only supports {support_framework} framework")
         self.device = device
@@ -114,7 +112,7 @@ class SafeTensorsFileLoader:
     def get_keys(self) -> List[str]:
         return self.frames.keys()
 
-    def get_shape(self, tensor_name: str) -> torch.Size:
+    def get_shape(self, tensor_name: str):
         return self.frames[tensor_name].shape
 
     def add_filenames(self, filenames: Dict[int, List[str]]):
@@ -139,16 +137,13 @@ class SafeTensorsFileLoader:
                 else:
                     completed += 1
 
-    def copy_files_to_device(self, dtype: torch.dtype=None, use_buf_register: bool=True, max_copy_block_size: int=16*1024*1024*1024)->FilesBufferOnDevice:
+    def copy_files_to_device(self, dtype=None, use_buf_register: bool=True, max_copy_block_size: int=16*1024*1024*1024)->FilesBufferOnDevice:
         """
         trigger copying all the files to device buffers.
         At this moment, we do not instantiate tensors but just creating copies at device buffers with or without GDS.
         Users can instantiate and/or partition tensors with FilesBufferOnDevice returned by this function.
         """
-        if self.framework == "pytorch":
-            if self.device.type != "cpu":
-                torch.cuda.set_device(self.device)
-        elif paddle_loaded and self.framework == "paddle":
+        if paddle_loaded and self.framework == "paddle":
             if "gpu" in self.device:
                 paddle.set_device(self.device)
 
@@ -188,15 +183,13 @@ class fastsafe_open:
     """
 
     def __init__(self, filenames: Union[str, List[str], Dict[int, str]],
-                       framework: str="pt", pg: dist.ProcessGroup=SingleGroup(),
-                       device: Union[str, torch.device]="cpu",
+                       framework: str="pt", pg=SingleGroup(),
+                       device: Union[str, None]="cpu",
                        nogds: bool=False,
                        debug_log: bool=False,
                        max_copy_block_size: int=16*1024*1024*1024):
         if framework not in support_framework:
             raise NotImplementedError("pytorch is only a framework that current fastsafetensors supports")
-        if isinstance(device, str) and framework == "pt":
-            device = torch.device(device)
         self.loader = SafeTensorsFileLoader(pg, device, nogds=nogds, debug_log=debug_log, framework= framework if framework != "pt" else "pytorch")
         if isinstance(filenames, str):
             filenames = [filenames]
@@ -215,7 +208,7 @@ class fastsafe_open:
     def get_keys(self)->List[str]:
         return self.fb.key_to_rank_lidx.keys()
 
-    def get_tensor(self, name: str)->torch.Tensor:
+    def get_tensor(self, name: str):
         return self.fb.get_tensor(name)
 
     def __enter__(self):

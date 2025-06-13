@@ -2,8 +2,6 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import os
-import torch
-import torch.distributed as dist
 from typing import Dict, List, Tuple, Generator
 from collections import OrderedDict
 
@@ -30,7 +28,7 @@ class FilesBufferOnDevice:
     Examples:
         See examples/run_single.py and examples/run_parallel.py.
     """
-    def __init__(self, rank_loaders: Dict[int, List[LazyTensorFactory]], pg: dist.ProcessGroup, auto_mem_delete=True, framework="pytorch"):
+    def __init__(self, rank_loaders: Dict[int, List[LazyTensorFactory]], pg, auto_mem_delete=True, framework="pytorch"):
         self.rank_loaders: Dict[int, List[LazyTensorFactory]] = rank_loaders
         self.key_to_rank_lidx: Dict[str, Tuple[int, int]] = {}
         self.instantiated: Dict[int, Dict[int, Dict[str, bool]]] = {} # rank, key name
@@ -63,7 +61,7 @@ class FilesBufferOnDevice:
         (rank, lidx) = self.key_to_rank_lidx[tensor_name]
         return self.rank_loaders[rank][lidx].metadata.src
 
-    def get_shape(self, tensor_name: str)->torch.Size:
+    def get_shape(self, tensor_name: str):
         (rank, lidx) = self._get_rank_lidx(tensor_name)
         return self.rank_loaders[rank][lidx].metadata.tensors[tensor_name].shape
 
@@ -72,7 +70,7 @@ class FilesBufferOnDevice:
             raise ValueError(f"_get_rank: key {tensor_name} was not found in files")
         return self.key_to_rank_lidx[tensor_name]
 
-    def _get_tensor(self, rank: int, lidx: int, tensor_name: str, ret: torch.Tensor, device: torch.device, dtype: torch.dtype)->torch.Tensor:
+    def _get_tensor(self, rank: int, lidx: int, tensor_name: str, ret, device, dtype):
         loader = self.rank_loaders[rank][lidx]
         if self.auto_mem_delete:
             self.instantiated[rank][lidx][tensor_name] = True
@@ -86,7 +84,7 @@ class FilesBufferOnDevice:
             ret = ret.to(device=device, dtype=dtype)
         return ret
 
-    def get_sharded(self, tensor_name: str, dim: int, device: torch.device=None, dtype: torch.dtype=None)->torch.Tensor:
+    def get_sharded(self, tensor_name: str, dim: int, device=None, dtype=None):
         """
         partition a tensor instance with the key tensor_name at the dimension dim and return it.
         In multi-process loading, this eventually calls torch.distributed.scatter.
@@ -96,7 +94,7 @@ class FilesBufferOnDevice:
         t = self.rank_loaders[rank][lidix].shuffle(self.pg, tensor_name, dim, group=self.group)
         return self._get_tensor(rank, lidix, tensor_name, t, device, dtype)
 
-    def get_tensor(self, tensor_name: str, device: torch.device=None, dtype: torch.dtype=None)->torch.Tensor:
+    def get_tensor(self, tensor_name: str, device=None, dtype=None):
         """
         get a tensor instance with the key tensor_name from a local or remote rank.
         In multi-process loading, this eventually calls torch.distributed.broadcast.
@@ -105,7 +103,7 @@ class FilesBufferOnDevice:
         """
         return self.get_sharded(tensor_name, -1, device, dtype)
 
-    def push_tensor(self, tensor_name: str, dst_rank: int,  device: torch.device=None, dtype: torch.dtype=None) -> torch.Tensor:
+    def push_tensor(self, tensor_name: str, dst_rank: int,  device=None, dtype=None):
         """
         push a tensor instance with the key tensor_name from a rank to a destination rank dst_rank.
         In multi-process loading, this eventually calls torch.distributed.send if the rank has the tensor instance.
@@ -116,12 +114,12 @@ class FilesBufferOnDevice:
         t = self.rank_loaders[rank][lidix].push(self.pg, tensor_name, dst_rank, rank, group=self.group)
         return self._get_tensor(rank, lidix, tensor_name, t, device, dtype)
 
-    def get_sharded_packed_qkv(self, tensor_name: str, device: torch.device=None, dtype: torch.dtype=None)->torch.Tensor:
+    def get_sharded_packed_qkv(self, tensor_name: str, device=None, dtype=None):
         (rank, lidix) = self._get_rank_lidx(tensor_name)
         t = self.rank_loaders[rank][lidix].shuffle_packed_qkv(self.pg, tensor_name, group=self.group)
         return self._get_tensor(rank, lidix, tensor_name, t, device, dtype)
 
-    def get_multi_cols(self, tensor_names: List[str], dim: int, device: torch.device=None, dtype: torch.dtype=None)->torch.Tensor:
+    def get_multi_cols(self, tensor_names: List[str], dim: int, device=None, dtype=None):
         rank_lidixs: Dict[Tuple[int, int], List[str]] = {}
         for tensor_name in tensor_names:
             ranklidx = self._get_rank_lidx(tensor_name)
@@ -129,13 +127,15 @@ class FilesBufferOnDevice:
                 rank_lidixs[ranklidx].append(tensor_name)
             else:
                 rank_lidixs[ranklidx] = [tensor_name]
-        ts: List[torch.Tensor] = []
+        ts = []
         for (rank, lidix), tns in sorted(rank_lidixs.items(), key=lambda x:x[0]):
             ts.append(self.rank_loaders[rank][lidix].shuffle_multi_cols(self.pg, tns, dim,group=self.group))
         if len(ts) == 1:
             # fastpath: tensors at the same layer are often in the same file
             return self._get_tensor(rank, lidix, rank_lidixs[(rank, lidix)][0], ts[0], device, dtype)
-        ret = torch.cat(ts, dim=dim)
+        ret = None
+        if self.framework == "paddle":
+            ret = paddle.concat(ts, axis=dim)
         if self.auto_mem_delete:
             for tensor_name in tensor_names:
                 (rank, lidx) = self._get_rank_lidx(tensor_name)
@@ -149,8 +149,8 @@ class FilesBufferOnDevice:
             ret = ret.to(device=device, dtype=dtype)
         return ret
 
-    def as_dict(self, tensor_shard_dim: OrderedDict[str, int])->Dict[str, torch.Tensor]:
-        tensors: Dict[str, torch.Tensor] = {}
+    def as_dict(self, tensor_shard_dim: OrderedDict[str, int])->Dict[str, None]:
+        tensors: Dict[str, None] = {}
         for tensor_name, dim in tensor_shard_dim.items():
             (rank, lidx) = self._get_rank_lidx(tensor_name)
             loader = self.rank_loaders[rank][lidx]
